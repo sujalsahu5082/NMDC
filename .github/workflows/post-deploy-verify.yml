@@ -1,0 +1,83 @@
+name: Post-deploy Verification
+
+on:
+  workflow_run:
+    workflows: ["Deploy to Render"]
+    types: [completed]
+
+jobs:
+  verify-and-notify:
+    name: Verify Render deploy and notify
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq curl
+
+      - name: Get backend URL from Render
+        id: get-backend
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ] || [ -z "${RENDER_SERVICE_ID:-}" ]; then
+            echo "Missing Render secrets" >&2
+            exit 1
+          fi
+          INFO=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" "https://api.render.com/v1/services/$RENDER_SERVICE_ID")
+          URL=$(echo "$INFO" | jq -r '.service.url // .service.defaultDomain // .url // empty')
+          if [ -z "$URL" ]; then
+            echo "Could not determine backend URL" >&2
+            exit 1
+          fi
+          echo "backend_url=$URL" >> $GITHUB_OUTPUT
+
+      - name: Verify endpoints and CORS
+        id: verify
+        env:
+          BACKEND_URL: ${{ steps.get-backend.outputs.backend_url }}
+        run: |
+          set -euo pipefail
+          URL=${BACKEND_URL%/}
+          echo "Checking backend: $URL"
+          RESULTS=""
+          OK=true
+          for ep in employees analytics; do
+            FULL="$URL/$ep"
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$FULL" || echo "000")
+            CORS=$(curl -sI "$FULL" | grep -i 'Access-Control-Allow-Origin:' || true)
+            if [ "$STATUS" != "200" ]; then
+              OK=false
+            fi
+            RESULTS="$RESULTS
+$ep -> status=$STATUS; cors=${CORS:-MISSING}"
+          done
+          echo "ok=$OK" >> $GITHUB_OUTPUT
+          # trim leading newline for message
+          MSG=$(echo -e "$RESULTS" | sed 's/^\n//')
+          echo "results<<EOF" >> $GITHUB_OUTPUT
+          echo "$MSG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post results to Discord
+        if: always()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          BACKEND_URL: ${{ steps.get-backend.outputs.backend_url }}
+          VERIFY_OK: ${{ steps.verify.outputs.ok }}
+          VERIFY_RESULTS: ${{ steps.verify.outputs.results }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_WEBHOOK:-}" ]; then
+            echo "No DISCORD_WEBHOOK secret configured; skipping notification"
+            exit 0
+          fi
+          STATUS_TEXT="SUCCESS"
+          if [ "${VERIFY_OK}" != "true" ]; then
+            STATUS_TEXT="ISSUES DETECTED"
+          fi
+          CONTENT="Render deploy verification: $STATUS_TEXT\nBackend: ${BACKEND_URL}\n${VERIFY_RESULTS}"
+          # Send JSON payload using jq to ensure escaping
+          PAYLOAD=$(jq -n --arg c "$CONTENT" '{content: $c}')
+          curl -s -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK" || true
