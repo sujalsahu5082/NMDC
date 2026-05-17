@@ -78,7 +78,12 @@ def load_excel():
     print(f"Loaded {len(_employees)} employees from Excel.")
 
 
-load_excel()
+try:
+    load_excel()
+except FileNotFoundError:
+    print("Warning: default Excel dataset not found — starting with empty dataset.")
+except Exception as e:
+    print(f"Warning: failed to load default dataset at startup: {e}")
 
 
 def _filter_employees(
