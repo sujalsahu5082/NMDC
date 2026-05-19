@@ -266,8 +266,13 @@ def get_analytics(
     exp_min: Optional[int] = None,
     exp_max: Optional[int] = None,
 ):
+    # By default, show only active employees in analytics overview unless a specific
+    # status filter is provided. This keeps the dashboard totals consistent when
+    # individual employees are marked Inactive from the directory UI.
+    effective_status = status if status is not None else "Active"
+
     employees = _filter_employees(
-        search, department, category, state, status, salary_min, salary_max, exp_min, exp_max
+        search, department, category, state, effective_status, salary_min, salary_max, exp_min, exp_max
     )
 
     total = len(employees)

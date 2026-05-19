@@ -881,6 +881,7 @@ function EmployeesPage({ dark, toast }) {
       if (!r.ok) throw new Error("Delete failed");
       toast(`${name} deleted`, "success");
       setRefreshKey(k => k + 1);
+      window.dispatchEvent(new Event('nmdc:refresh'));
     } catch (e) { toast(e.message, "error"); }
   };
 
@@ -896,6 +897,7 @@ function EmployeesPage({ dark, toast }) {
       if (!response.ok) throw new Error("Failed to update status");
       toast(`${emp["Employee Name"]} marked ${nextStatus}`, "success");
       setRefreshKey(k => k + 1);
+      window.dispatchEvent(new Event('nmdc:refresh'));
     } catch (e) {
       toast(e.message, "error");
     } finally {
@@ -937,6 +939,7 @@ function EmployeesPage({ dark, toast }) {
       const j = await res.json();
       toast("Data imported successfully", "success");
       setRefreshKey(k => k + 1);
+      window.dispatchEvent(new Event('nmdc:refresh'));
       setIsCleared(false);
       if (typeof reload === "function") reload();
     } catch (err) {
@@ -956,6 +959,7 @@ function EmployeesPage({ dark, toast }) {
       setPage(1);
       setIsCleared(true);
       setRefreshKey(k => k + 1);
+      window.dispatchEvent(new Event('nmdc:refresh'));
       if (typeof reload === "function") reload();
     } catch (err) {
       toast(err.message || "Delete failed", "error");
@@ -990,6 +994,7 @@ function EmployeesPage({ dark, toast }) {
       toast(`${selectedRows.length} employees deleted`, "success");
       setSelectedIds([]);
       setRefreshKey(k => k + 1);
+      window.dispatchEvent(new Event('nmdc:refresh'));
     } catch (e) {
       toast(e.message || "Bulk delete failed", "error");
     }
@@ -1530,7 +1535,7 @@ function EmployeesPage({ dark, toast }) {
         <EmployeeModal
           employee={modalEmp}
           onClose={() => { setShowModal(false); setModalEmp(null); }}
-          onSave={() => setRefreshKey(k => k + 1)}
+          onSave={() => { setRefreshKey(k => k + 1); window.dispatchEvent(new Event('nmdc:refresh')); }}
           dark={dark}
           toast={toast}
         />
@@ -1761,6 +1766,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [apiOk, setApiOk] = useState(null);
   const [filterOptions, setFilterOptions] = useState(null);
+  const [recordsCount, setRecordsCount] = useState(null);
   const [filters, setFilters] = useState({
     department: "",
     salary_min: 0,
@@ -1786,6 +1792,22 @@ export default function App() {
         }));
       })
       .catch(() => setApiOk(false));
+  }, []);
+
+  // Keep topbar record count in sync by fetching analytics summary and
+  // reloading when a global refresh event is emitted.
+  useEffect(() => {
+    let mounted = true;
+    const loadCount = () => {
+      fetch(`${API}/analytics`)
+        .then(r => r.ok ? r.json() : Promise.reject(new Error('API')))
+        .then(j => { if (mounted) setRecordsCount(j?.summary?.total_employees ?? null); })
+        .catch(() => { if (mounted) setRecordsCount(null); });
+    };
+    loadCount();
+    const handler = () => loadCount();
+    window.addEventListener('nmdc:refresh', handler);
+    return () => { mounted = false; window.removeEventListener('nmdc:refresh', handler); };
   }, []);
 
   const nav = [
@@ -1855,7 +1877,7 @@ export default function App() {
               <h1 className={`text-base font-bold ${dark ? "text-white" : "text-gray-900"}`}>
                 {page === "overview" ? "Analytics Overview" : "Employee Directory"}
               </h1>
-              <p className={`text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>NMDC Employee Master · 1,500 records</p>
+              <p className={`text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>NMDC Employee Master · {recordsCount ?? '—'} records</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
