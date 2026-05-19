@@ -1,8 +1,6 @@
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import pandas as pd
-import numpy as np
 import re
 import io
 import json
@@ -10,6 +8,17 @@ import os
 from typing import Optional, List
 from datetime import datetime
 import copy
+
+# Optional heavy dependencies: pandas/numpy may not be installed in all dev
+# environments. Import them if available; otherwise keep `pd`/`np` as None
+# and make `load_excel()` a no-op so the app can still start.
+try:
+    import pandas as pd
+    import numpy as np
+except Exception as _e:
+    pd = None
+    np = None
+    print(f"Warning: pandas/numpy not available: {_e}")
 
 app = FastAPI(title="NMDC Employee Dashboard API", version="1.0.0")
 
@@ -27,20 +36,34 @@ _next_id = 1
 
 
 def parse_age(age_str):
-    if pd.isna(age_str):
-        return None
+    # pd may be None in lightweight environments; handle both cases
+    if pd is not None:
+        if pd.isna(age_str):
+            return None
+    else:
+        if age_str is None:
+            return None
     match = re.search(r"(\d+)yrs", str(age_str))
     return int(match.group(1)) if match else None
 
 
 def load_excel():
     global _employees, _next_id
+    # If pandas isn't available, skip loading the Excel dataset so the
+    # server can start (endpoints will operate on an empty dataset).
+    if pd is None:
+        print("Pandas not available — starting with empty dataset.")
+        _employees = []
+        _next_id = 1
+        return
+
     # Default dataset file - use absolute path
     script_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(script_dir, "NEW NMDC_Employee_Master_1500.xlsx")
     print(f"Loading Excel from: {file_path}")
     try:
-        df = pd.read_excel(file_path)
+        # Use openpyxl engine for faster .xlsx reading
+        df = pd.read_excel(file_path, engine='openpyxl')
     except FileNotFoundError:
         print(f"ERROR: File not found at {file_path}")
         raise
@@ -49,20 +72,22 @@ def load_excel():
         raise
     df = df.replace({np.nan: None})
 
-    # Derived fields
-    df["Age_Years"] = df["Age"].apply(parse_age)
-    df["Total_Salary"] = df["BASIC"].fillna(0) + df["DA"].fillna(0)
+    # Derived fields - use vectorized operations for speed
+    # Parse Age: extract number from "XXyrs" format
+    df["Age_Years"] = df["Age"].astype(str).str.extract(r'(\d+)')[0].astype('float').fillna(0).astype('Int64')
+    
+    # Calculate Total Salary
+    df["Total_Salary"] = df["BASIC"].fillna(0).astype(float) + df["DA"].fillna(0).astype(float)
 
-    def get_experience(doj):
-        if doj is None:
-            return None
-        try:
-            d = datetime.strptime(str(doj).strip(), "%d-%m-%Y")
-            return (datetime.now() - d).days // 365
-        except Exception:
-            return None
-
-    df["Experience_Years"] = df["Date of Joining-NMDC"].apply(get_experience)
+    # Calculate Experience in Years from Date of Joining
+    try:
+        doj_col = df["Date of Joining-NMDC"]
+        # Handle both string and datetime formats
+        doj_dates = pd.to_datetime(doj_col, format="%d-%m-%Y", errors='coerce')
+        df["Experience_Years"] = ((datetime.now() - doj_dates).dt.days // 365).fillna(0).astype('Int64')
+    except Exception as e:
+        print(f"Warning: Could not parse Date of Joining: {e}")
+        df["Experience_Years"] = None
 
     records = df.to_dict(orient="records")
     _employees = []
@@ -303,15 +328,19 @@ def get_analytics(
 
     # Salary histogram (10 buckets)
     salaries = [e.get("Total_Salary") or 0 for e in employees]
-    min_sal = min(salaries)
-    max_sal = max(salaries)
-    bucket_size = (max_sal - min_sal) / 10 if max_sal != min_sal else 1
     hist_buckets = []
-    for i in range(10):
-        lo = round(min_sal + i * bucket_size)
-        hi = round(min_sal + (i + 1) * bucket_size)
-        count = sum(1 for s in salaries if lo <= s < hi)
-        hist_buckets.append({"range": f"{lo//1000}K–{hi//1000}K", "count": count})
+    if salaries:
+        min_sal = min(salaries)
+        max_sal = max(salaries)
+        bucket_size = (max_sal - min_sal) / 10 if max_sal != min_sal else 1
+        for i in range(10):
+            lo = round(min_sal + i * bucket_size)
+            hi = round(min_sal + (i + 1) * bucket_size)
+            count = sum(1 for s in salaries if lo <= s < hi)
+            hist_buckets.append({"range": f"{lo//1000}K–{hi//1000}K", "count": count})
+    else:
+        # No salary data available; return empty histogram
+        hist_buckets = []
 
     # Experience vs Salary (sampled 200 points)
     import random
@@ -413,12 +442,13 @@ def export_employees(
     department: Optional[str] = None,
     category: Optional[str] = None,
     state: Optional[str] = None,
+    status: Optional[str] = None,
     salary_min: Optional[float] = None,
     salary_max: Optional[float] = None,
     exp_min: Optional[int] = None,
     exp_max: Optional[int] = None,
 ):
-    filtered = _filter_employees(search, department, category, state,
+    filtered = _filter_employees(search, department, category, state, status,
                                   salary_min, salary_max, exp_min, exp_max)
     df = pd.DataFrame(filtered)
     output = io.BytesIO()

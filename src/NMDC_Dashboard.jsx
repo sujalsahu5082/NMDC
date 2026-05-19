@@ -9,6 +9,8 @@ import {
   Check, AlertCircle, UploadCloud,
 } from "lucide-react";
 
+import logoImg from "../NMDC LOGO.jpg";
+
 const API = "http://localhost:8000";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
@@ -1699,21 +1701,21 @@ function ViewModal({ emp, onClose, dark }) {
 
 function LogoArea({ dark, sidebarOpen }) {
   const [visible, setVisible] = useState(true);
-  const url = "https://images.seeklogo.com/logo-png/63/1/national-mineral-development-corporation-logo-png_seeklogo-630408.png";
+  const url = logoImg;
   return (
     <>
-      <div className="w-10 h-10 flex items-center justify-center flex-shrink-0">
+      <div className="w-12 h-12 flex items-center justify-center flex-shrink-0 bg-white rounded-full p-1.5 shadow-sm">
         {visible ? (
           <img
             src={url}
             alt="NMDC"
-            className="w-full h-full object-contain rounded-md"
+            className="w-full h-full object-contain rounded-full"
             onError={() => setVisible(false)}
             onLoad={() => setVisible(true)}
           />
         ) : (
-          <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${dark ? "bg-amber-500" : "bg-amber-500"}`}>
-            <BarChart2 size={16} className="text-white" />
+          <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${dark ? "bg-amber-500" : "bg-amber-500"}`}>
+            <BarChart2 size={18} className="text-white" />
           </div>
         )}
       </div>
@@ -1721,6 +1723,9 @@ function LogoArea({ dark, sidebarOpen }) {
         <div>
           <div className={`text-sm font-black tracking-tight ${dark ? "text-white" : "text-gray-900"}`}>NMDC</div>
           <div className={`text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>Dashboard</div>
+          <a href="/nmdc_login.html" className={`mt-1 inline-block text-xs font-medium ${dark ? "text-sky-400 hover:text-sky-200" : "text-sky-600 hover:text-sky-800"}`}>
+            ← Back to login
+          </a>
         </div>
       )}
     </>
